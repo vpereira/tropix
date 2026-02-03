@@ -1505,6 +1505,7 @@ colon (const char *buf)
 	const char	*fn;
 	int		b, e, li;
 	int		useforce;
+	int		wq;
 
 	if (buf == NULL || *buf == '\0')
 		return;
@@ -1522,7 +1523,14 @@ colon (const char *buf)
 		p++;
 
 	/* Comando */
+	wq = 0;
 	c = *p++;
+
+	if (c == 'w' && (*p == 'q' || *p == 'Q'))
+	{
+		wq = 1;
+		p++;
+	}
 
 	useforce = 0;
 
@@ -1575,28 +1583,29 @@ colon (const char *buf)
 			if (current_filename == NULL)
 				current_filename = xstrdup (fn);
 		}
+
+		if (wq)
+			editing = 0;
 		break;
 
 	    case 'x':	/* save and exit */
-		if (file_modified)
+		fn = current_filename;
+
+		if (fn == NULL)
 		{
-			fn = current_filename;
-
-			if (fn == NULL)
-			{
-				status_line_bold ("Sem nome de arquivo");
-				break;
-			}
-
-			li = file_write (fn, text, end - 1);
-
-			if (li < 0)
-			{
-				status_line_bold ("Erro gravando");
-				break;
-			}
+			status_line_bold ("Sem nome de arquivo");
+			break;
 		}
 
+		li = file_write (fn, text, end - 1);
+
+		if (li < 0)
+		{
+			status_line_bold ("Erro gravando");
+			break;
+		}
+
+		file_modified = 0;
 		editing = 0;
 		break;
 
