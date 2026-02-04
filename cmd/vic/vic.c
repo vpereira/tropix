@@ -227,7 +227,9 @@ struct globals
 struct globals	G;
 
 #define	VI_ERR_METHOD	8
+#define	VI_NUMBER	16
 #define	err_method	(vi_setops & VI_ERR_METHOD)
+#define	number_mode	(vi_setops & VI_NUMBER)
 #define	SET_READONLY_FILE(flags)	((flags) |= 0x01)
 #define	SET_READONLY_MODE(flags)	((flags) |= 0x02)
 #define	UNSET_READONLY_FILE(flags)	((flags) &= 0xfe)
@@ -331,7 +333,7 @@ static void	flash (int);
 static void	status_line (const char *, ...);
 static void	status_line_bold (const char *, ...);
 static void	redraw (int);
-static void	format_line (int, char *);
+static void	format_line (int, char *, int, int, int, int);
 static void	refresh (int);
 static void	Indicate_Error (void);
 #define	indicate_error(c)	Indicate_Error ()
@@ -832,6 +834,18 @@ init_terminfo (void)
 	ti_rev = info.i_strings[s_rev];
 	ti_sgr0 = info.i_strings[s_sgr0];
 
+	if (ti_clear == NOSTR || ti_cup == NOSTR || ti_ed == NOSTR || ti_el == NOSTR)
+	{
+		terminfo_ok = 0;
+		return;
+	}
+
+	if (ti_clear[0] == '\0' || ti_cup[0] == '\0' || ti_ed[0] == '\0' || ti_el[0] == '\0')
+	{
+		terminfo_ok = 0;
+		return;
+	}
+
 	if (ti_rev == NOSTR || ti_sgr0 == NOSTR)
 	{
 		ti_rev = "";
@@ -974,6 +988,10 @@ refresh (int full)
 {
 	int		li, changed;
 	char		*tp, *sp;
+	int		show_number;
+	int		numw;
+	int		base_line;
+	int		total_lines;
 
 	if (text == NULL || screen == NULL)
 		return;
@@ -986,6 +1004,35 @@ refresh (int full)
 
 	if (full)
 		screen_erase ();
+
+	show_number = number_mode ? 1 : 0;
+	numw = 0;
+	base_line = 0;
+	offset = 0;
+
+	if (show_number)
+	{
+		total_lines = count_lines (text, end - 1) + 1;
+
+		if (total_lines <= 0)
+			total_lines = 1;
+
+		numw = 1;
+
+		while (total_lines >= 10)
+		{
+			total_lines /= 10;
+			numw++;
+		}
+
+		if (numw + 1 >= columns)
+			show_number = 0;
+		else
+			base_line = count_lines (text, screenbegin);
+	}
+
+	if (show_number)
+		offset = numw + 1;
 
 	/* Encontra a primeira linha visivel */
 	sync_cursor (dot, &crow, &ccol);
@@ -1004,19 +1051,15 @@ refresh (int full)
 		if (tp >= end)
 		{
 			/* Linha alem do texto - limpa */
-			if (screen[li * columns] != '~')
+			if (screen[li * columns] != '~' || show_number)
 			{
-				place_cursor (li, 0, FALSE);
-				write1 ("~");
-				clear_to_eol ();
-				memset (&screen[li * columns], ' ', columns);
-				screen[li * columns] = '~';
+				format_line (li, NOSTR, show_number, numw, 0, 1);
 			}
 		}
 		else
 		{
 			/* Mostra a linha */
-			format_line (li, tp);
+			format_line (li, tp, show_number, numw, base_line + li + 1, 0);
 		}
 	}
 
@@ -1037,51 +1080,84 @@ refresh (int full)
  ****************************************************************
  */
 static void
-format_line (int li, char *src)
+format_line (int li, char *src, int show_number, int numw, int line_no, int tilde)
 {
-	int		co;
+	int		co, i;
 	char		c, *dst;
 	char		buf[MAX_SCR_COLS + 2];
+	char		numbuf[16];
 
 	dst = buf;
 	co = 0;
 
-	while (co < columns - 1)
+	if (show_number)
 	{
-		c = *src;
-
-		if (c == '\n' || c == '\0')
-			break;
-
-		if (c < ' ' || c == 0x7F)
+		if (tilde)
 		{
-			if (co < columns - 2)
-			{
-				*dst++ = '^';
-				*dst++ = (c == 0x7F) ? '?' : (c + '@');
-				co += 2;
-			}
-			else
-			{
-				break;
-			}
-		}
-		else if (c == '\t')
-		{
-			do
+			for (i = 0; i < numw + 1 && co < columns; i++)
 			{
 				*dst++ = ' ';
 				co++;
-
-			}	while ((co % tabstop) && co < columns - 1);
+			}
 		}
 		else
 		{
-			*dst++ = c;
+			snprintf (numbuf, sizeof (numbuf), "%*d ", numw, line_no);
+			for (i = 0; numbuf[i] != '\0' && co < columns; i++)
+			{
+				*dst++ = numbuf[i];
+				co++;
+			}
+		}
+	}
+
+	if (tilde)
+	{
+		if (co < columns)
+		{
+			*dst++ = '~';
 			co++;
 		}
+	}
+	else
+	{
+		while (co < columns - 1)
+		{
+			c = *src;
 
-		src++;
+			if (c == '\n' || c == '\0')
+				break;
+
+			if (c < ' ' || c == 0x7F)
+			{
+				if (co < columns - 2)
+				{
+					*dst++ = '^';
+					*dst++ = (c == 0x7F) ? '?' : (c + '@');
+					co += 2;
+				}
+				else
+				{
+					break;
+				}
+			}
+			else if (c == '\t')
+			{
+				do
+				{
+					*dst++ = ' ';
+					co++;
+
+				}	while ((co % tabstop) && co < columns - 1);
+			}
+			else
+			{
+				*dst++ = c;
+				co++;
+			}
+
+			src++;
+		}
 	}
 
 	/* Preenche com espacos */
@@ -1123,8 +1199,8 @@ draw_status_line (void)
 	mod = file_modified ? " [+]" : "";
 	ins = cmd_mode ? " (I)" : "";
 
-	cur_line = count_lines (text, dot);
-	total_lines = count_lines (text, end - 1);
+	cur_line = count_lines (text, dot) + 1;
+	total_lines = count_lines (text, end - 1) + 1;
 
 	if (total_lines <= 0)
 		total_lines = 1;
@@ -1218,7 +1294,10 @@ sync_cursor (char *p, int *row, int *col)
 	}
 
 	*row = li;
-	*col = co;
+	*col = co + offset;
+
+	if (*col >= (int)columns)
+		*col = columns - 1;
 
 }	/* end sync_cursor */
 
@@ -1653,8 +1732,35 @@ colon (const char *buf)
 		break;
 
 	    case 's':	/* substitute */
-		/* Implementacao simplificada */
-		status_line_bold ("Comando :s nao implementado");
+		if (p[0] == 'e' && p[1] == 't')
+		{
+			p += 2;
+
+			while (*p == ' ' || *p == '\t')
+				p++;
+
+			if (strcmp (p, "number") == 0 || strcmp (p, "nu") == 0)
+			{
+				vi_setops |= VI_NUMBER;
+				status_line ("set number");
+				redraw (TRUE);
+			}
+			else if (strcmp (p, "nonumber") == 0 || strcmp (p, "nonu") == 0)
+			{
+				vi_setops &= ~VI_NUMBER;
+				status_line ("set nonumber");
+				redraw (TRUE);
+			}
+			else
+			{
+				status_line_bold ("Opcao desconhecida: %s", p);
+			}
+		}
+		else
+		{
+			/* Implementacao simplificada */
+			status_line_bold ("Comando :s nao implementado");
+		}
 		break;
 
 	    case '!':	/* shell command */
@@ -2087,7 +2193,7 @@ do_cmd (int c)
 					break;
 				}
 
-				if (n == '\b' || n == 0x7F)
+				if (n == '\b' || n == 0x7F || n == erase_char)
 				{
 					if (i > 0)
 					{
@@ -2152,7 +2258,7 @@ do_cmd (int c)
 					break;
 				}
 
-				if (n == '\b' || n == 0x7F)
+				if (n == '\b' || n == 0x7F || n == erase_char)
 				{
 					if (i > 0)
 					{
