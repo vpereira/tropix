@@ -131,6 +131,8 @@ static const char	*ti_ed;
 static const char	*ti_el;
 static const char	*ti_rev;
 static const char	*ti_sgr0;
+static const char	*ti_smkx;
+static const char	*ti_rmkx;
 static int		terminfo_ok;
 static int		window_changed;
 
@@ -295,7 +297,6 @@ struct globals	G;
  *	Prototipos de funcoes										*
  ****************************************************************
  */
-static int	init_text_buffer (char *);
 static void	edit_file (char **);
 static int	next_tabstop (int);
 static void	sync_cursor (char *, int *, int *);
@@ -557,6 +558,14 @@ rawmode (void)
 
 	ioctl (0, TCSETAW, &term_vi);
 
+	/* Ativa modo teclado do terminal se disponivel */
+	if (terminfo_ok && ti_smkx && ti_smkx[0] != '\0')
+	{
+		fflush (stdout);
+		write1 (parmexec (ti_smkx));
+		fflush (stdout);
+	}
+
 	baud = term_vi.c_cflag & CBAUD;
 	ticsPerChar = 1;
 
@@ -583,6 +592,14 @@ rawmode (void)
 static void
 cookmode (void)
 {
+	/* Desativa modo teclado do terminal se disponivel */
+	if (terminfo_ok && ti_rmkx && ti_rmkx[0] != '\0')
+	{
+		fflush (stdout);
+		write1 (parmexec (ti_rmkx));
+		fflush (stdout);
+	}
+
 	ioctl (0, TCSETAW, &term_orig);
 
 }	/* end cookmode */
@@ -827,13 +844,31 @@ init_terminfo (void)
 		return;
 	}
 
-	ti_clear = info.i_strings[s_clear];
-	ti_cup = info.i_strings[s_cup];
-	ti_ed = info.i_strings[s_ed];
-	ti_el = info.i_strings[s_el];
-	ti_rev = info.i_strings[s_rev];
-	ti_sgr0 = info.i_strings[s_sgr0];
+	/*
+	 *	s_cup (posicao do cursor) e o indice mais alto que usamos.
+	 *	Verificar limites antes de acessar o array i_strings para
+	 *	evitar acesso fora dos limites em descricoes incompletas.
+	 */
+	if (info.i_strno <= (int)s_cup)
+	{
+		terminfo_ok = 0;
+		return;
+	}
 
+	ti_clear = info.i_strings[s_clear];
+	ti_cup   = info.i_strings[s_cup];
+	ti_ed    = info.i_strings[s_ed];
+	ti_el    = info.i_strings[s_el];
+
+	/* Capacidades opcionais: atributos de video */
+	ti_rev  = ((int)s_rev  < info.i_strno) ? info.i_strings[s_rev]  : NOSTR;
+	ti_sgr0 = ((int)s_sgr0 < info.i_strno) ? info.i_strings[s_sgr0] : NOSTR;
+
+	/* Capacidades opcionais: modo teclado */
+	ti_smkx = ((int)s_smkx < info.i_strno) ? info.i_strings[s_smkx] : NOSTR;
+	ti_rmkx = ((int)s_rmkx < info.i_strno) ? info.i_strings[s_rmkx] : NOSTR;
+
+	/* As capacidades essenciais nao podem ser nulas nem vazias (T_END=0) */
 	if (ti_clear == NOSTR || ti_cup == NOSTR || ti_ed == NOSTR || ti_el == NOSTR)
 	{
 		terminfo_ok = 0;
@@ -846,11 +881,11 @@ init_terminfo (void)
 		return;
 	}
 
-	if (ti_rev == NOSTR || ti_sgr0 == NOSTR)
-	{
+	if (ti_rev == NOSTR || ti_rev[0] == '\0')
 		ti_rev = "";
+
+	if (ti_sgr0 == NOSTR || ti_sgr0[0] == '\0')
 		ti_sgr0 = "";
-	}
 
 	terminfo_ok = 1;
 
@@ -986,7 +1021,7 @@ redraw (int full)
 static void
 refresh (int full)
 {
-	int		li, changed;
+	int		li;
 	char		*tp, *sp;
 	int		show_number;
 	int		numw;
@@ -1037,17 +1072,11 @@ refresh (int full)
 	/* Encontra a primeira linha visivel */
 	sync_cursor (dot, &crow, &ccol);
 
-	/* Redesenha cada linha */
+	/* Redesenha cada linha - O(n) mantendo ponteiro corrente */
+	tp = screenbegin;
+
 	for (li = 0; li < rows - 1; li++)
 	{
-		tp = screenbegin;
-
-		/* Avanca ate a linha li */
-		for (changed = 0; changed < li && tp < end; changed++)
-		{
-			tp = next_line (tp);
-		}
-
 		if (tp >= end)
 		{
 			/* Linha alem do texto - limpa */
@@ -1058,8 +1087,9 @@ refresh (int full)
 		}
 		else
 		{
-			/* Mostra a linha */
+			/* Mostra a linha e avanca para a proxima */
 			format_line (li, tp, show_number, numw, base_line + li + 1, 0);
+			tp = next_line (tp);
 		}
 	}
 
@@ -1197,7 +1227,7 @@ draw_status_line (void)
 	fn = current_filename ? current_filename : "[Sem nome]";
 	ro = readonly_mode ? " [R]" : "";
 	mod = file_modified ? " [+]" : "";
-	ins = cmd_mode ? " (I)" : "";
+	ins = (cmd_mode == 1) ? " (I)" : (cmd_mode == 2) ? " (S)" : "";
 
 	cur_line = count_lines (text, dot) + 1;
 	total_lines = count_lines (text, end - 1) + 1;
@@ -2446,6 +2476,7 @@ do_insert (int c)
 
 	    case '\b':
 	    case 0x7F:
+	do_backspace:
 		if (dot > begin_line (dot))
 		{
 			dot--;
@@ -2460,6 +2491,9 @@ do_insert (int c)
 		break;
 
 	    default:
+		if ((uchar)c == (uchar)erase_char && c != '\b' && c != 0x7F)
+			goto do_backspace;
+
 		if (c >= ' ' || c == '\t')
 		{
 			if (cmd_mode == 2)	/* replace mode */
