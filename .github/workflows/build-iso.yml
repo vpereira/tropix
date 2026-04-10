@@ -1,0 +1,78 @@
+name: Build and Release ISO
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-iso:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install xorriso
+        run: sudo apt-get install -y xorriso
+
+      - name: Verify artifacts
+        run: |
+          ok=1
+          for f in dist/boot.cd dist/boot dist/tropix dist/boot.gz; do
+            if [ ! -f "$f" ]; then
+              echo "Missing artifact: $f"
+              ok=0
+            fi
+          done
+          [ "$ok" = "1" ] || exit 1
+          echo "Artifact sizes:"
+          ls -lh dist/boot dist/boot.cd dist/tropix dist/boot.gz
+
+      - name: Assemble ISO root
+        run: |
+          mkdir -p iso/iso_root
+          cp dist/boot.cd  iso/iso_root/boot.cd
+          cp dist/boot     iso/iso_root/boot
+          cp dist/tropix   iso/iso_root/tropix
+          cp dist/boot.gz  iso/iso_root/boot.gz
+          cp install.txt   iso/iso_root/install.txt
+
+      - name: Build ISO
+        run: |
+          TAG=${{ github.ref_name }}
+          sh iso/build-iso.sh iso/iso_root "tropix-${TAG}.iso" TROPIXBOOT
+          echo "ISO size: $(ls -lh tropix-${TAG}.iso | awk '{print $5}')"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG=${{ github.ref_name }}
+          gh release create "$TAG" \
+            "tropix-${TAG}.iso" \
+            --title "Tropix OS ${TAG}" \
+            --notes "## Tropix OS ${TAG}
+
+Bootable ISO image for Tropix OS.
+
+### Boot with QEMU
+
+\`\`\`sh
+qemu-system-i386 \\
+  -m 128 -cpu 486 \\
+  -cdrom tropix-${TAG}.iso \\
+  -hda tropix-disk.qcow2 \\
+  -boot d \\
+  -netdev user,id=net0 -device rtl8139,netdev=net0
+\`\`\`
+
+At the \`boot>\` prompt type \`-i\` to decompress the filesystem and boot.
+
+### Contents
+
+Built from commit \`${{ github.sha }}\` on tag \`${TAG}\`.
+
+See \`install.txt\` inside the ISO for the full installation procedure."
