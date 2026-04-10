@@ -2406,54 +2406,146 @@ do_cmd (int c)
 
 /*
  ****************************************************************
- *	Busca de padrao, sem regex              					*
+ *	Busca de padrao com expressao regular				*
  ****************************************************************
  */
+extern char	*_loc1;
+
 static char *
 search (char *start, char *pattern, int dir)
 {
-	char		*p, *found;
-	int		len;
+	static char	line_buf[CONFIG_FEATURE_VI_MAX_LEN + 1];
+	static char	match_buf[CONFIG_FEATURE_VI_MAX_LEN + 1];
+	char		*compiled;
+	char		*line_start, *line_end;
+	char		*p, *scan, *result, *last_loc1;
+	int		len, off, limit;
 
-	len = strlen (pattern);
-
-	if (len == 0)
+	if (pattern[0] == '\0')
 		return (NULL);
+
+	compiled = regcmp (pattern);
+	if (compiled == NOSTR)
+		return (NULL);
+
+	result = NULL;
 
 	if (dir > 0)
 	{
-		/* Busca para frente */
-		for (p = start; p < end - len; p++)
+		/* Busca para frente: do cursor ate o fim, depois wrap */
+		line_start = begin_line (start);
+		off = start - line_start;
+
+		for (p = line_start; p < end; p = next_line (p))
 		{
-			if (strncmp (p, pattern, len) == 0)
-				return (p);
+			line_end = end_line (p);
+			len = line_end - p;
+			if (len > CONFIG_FEATURE_VI_MAX_LEN)
+				len = CONFIG_FEATURE_VI_MAX_LEN;
+			memcpy (line_buf, p, len);
+			line_buf[len] = '\0';
+
+			if (regex (compiled, line_buf + off, match_buf) != NOSTR)
+			{
+				result = p + (_loc1 - line_buf);
+				goto done;
+			}
+			off = 0;	/* linhas seguintes: busca do inicio */
 		}
 
-		/* Wrap around */
-		for (p = text; p < start; p++)
+		/* Wrap: do inicio do texto ate a linha de partida */
+		for (p = text; p < line_start; p = next_line (p))
 		{
-			if (strncmp (p, pattern, len) == 0)
-				return (p);
+			line_end = end_line (p);
+			len = line_end - p;
+			if (len > CONFIG_FEATURE_VI_MAX_LEN)
+				len = CONFIG_FEATURE_VI_MAX_LEN;
+			memcpy (line_buf, p, len);
+			line_buf[len] = '\0';
+
+			if (regex (compiled, line_buf, match_buf) != NOSTR)
+			{
+				result = p + (_loc1 - line_buf);
+				goto done;
+			}
 		}
 	}
 	else
 	{
-		/* Busca para tras */
-		for (p = start; p >= text; p--)
+		/* Busca para tras: do cursor ate o inicio, depois wrap */
+		line_start = begin_line (start);
+
+		for (p = line_start; ; p = prev_line (p))
 		{
-			if (strncmp (p, pattern, len) == 0)
-				return (p);
+			line_end = end_line (p);
+			len = line_end - p;
+
+			if (p == line_start)
+			{
+				/* Limitar busca ate a posicao do cursor */
+				limit = start - line_start;
+				if (limit > CONFIG_FEATURE_VI_MAX_LEN)
+					limit = CONFIG_FEATURE_VI_MAX_LEN;
+				len = limit;
+			}
+			else if (len > CONFIG_FEATURE_VI_MAX_LEN)
+				len = CONFIG_FEATURE_VI_MAX_LEN;
+
+			memcpy (line_buf, p, len);
+			line_buf[len] = '\0';
+
+			/* Encontrar a ultima ocorrencia na linha */
+			last_loc1 = NOSTR;
+			scan = line_buf;
+			while (regex (compiled, scan, match_buf) != NOSTR)
+			{
+				last_loc1 = _loc1;
+				scan = _loc1 + 1;
+				if (scan >= line_buf + len)
+					break;
+			}
+
+			if (last_loc1 != NOSTR)
+			{
+				result = p + (last_loc1 - line_buf);
+				goto done;
+			}
+
+			if (p <= text)
+				break;
 		}
 
-		/* Wrap around */
-		for (p = end - len - 1; p > start; p--)
+		/* Wrap: do fim do texto ate a linha de partida */
+		for (p = begin_line (end - 1); p > line_start; p = prev_line (p))
 		{
-			if (strncmp (p, pattern, len) == 0)
-				return (p);
+			line_end = end_line (p);
+			len = line_end - p;
+			if (len > CONFIG_FEATURE_VI_MAX_LEN)
+				len = CONFIG_FEATURE_VI_MAX_LEN;
+			memcpy (line_buf, p, len);
+			line_buf[len] = '\0';
+
+			last_loc1 = NOSTR;
+			scan = line_buf;
+			while (regex (compiled, scan, match_buf) != NOSTR)
+			{
+				last_loc1 = _loc1;
+				scan = _loc1 + 1;
+				if (scan >= line_buf + len)
+					break;
+			}
+
+			if (last_loc1 != NOSTR)
+			{
+				result = p + (last_loc1 - line_buf);
+				goto done;
+			}
 		}
 	}
 
-	return (NULL);
+done:
+	free (compiled);
+	return (result);
 
 }	/* end search */
 
