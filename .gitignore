@@ -3,3 +3,5 @@
 extras/*.tgz
 extras/*.tar.gz
 *.qcow2
+.editorconfig
+.vscode/

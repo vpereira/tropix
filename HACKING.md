@@ -52,6 +52,10 @@ Boot process and partitioning instructions are in `install.txt`. Quick summary:
 
 Refer to `install.txt` for complete installation procedure.
 
+## Code Style
+
+Use Latin-1 (ISO-8859-1) encoding. Indent with tabs, width 8. Do not use spaces for indentation. Use LF line endings. See `.editorconfig` and `.vscode/settings.json`.
+
 ## Build a Bootable ISO from Source
 
 This section describes how to build a custom `tropix.iso` after making changes to the codebase.
