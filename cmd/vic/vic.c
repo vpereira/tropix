@@ -529,7 +529,7 @@ full_write (int fd, const void *buf, int len)
 static void
 write1 (const char *out)
 {
-	fputs (out, stdout);
+	full_write (1, out, strlen (out));
 
 }	/* end write1 */
 
@@ -767,10 +767,15 @@ screen_erase (void)
 static void
 place_cursor (int row, int col, int optimize)
 {
+	char		buf[32];
+
 	if (terminfo_ok && ti_cup)
 		write1 (parmexec (ti_cup, row, col));
 	else
-		printf (CMrc, row + 1, col + 1);
+	{
+		snprintf (buf, sizeof (buf), CMrc, row + 1, col + 1);
+		write1 (buf);
+	}
 
 }	/* end place_cursor */
 
@@ -1158,7 +1163,16 @@ format_line (int li, char *src, int show_number, int numw, int line_no, int tild
 			if (c == '\n' || c == '\0')
 				break;
 
-			if (c < ' ' || c == 0x7F)
+			if (c == '\t')
+			{
+				do
+				{
+					*dst++ = ' ';
+					co++;
+
+				}	while ((co % tabstop) && co < columns - 1);
+			}
+			else if (c < ' ' || c == 0x7F)
 			{
 				if (co < columns - 2)
 				{
@@ -1170,15 +1184,6 @@ format_line (int li, char *src, int show_number, int numw, int line_no, int tild
 				{
 					break;
 				}
-			}
-			else if (c == '\t')
-			{
-				do
-				{
-					*dst++ = ' ';
-					co++;
-
-				}	while ((co % tabstop) && co < columns - 1);
 			}
 			else
 			{
@@ -1203,7 +1208,7 @@ format_line (int li, char *src, int show_number, int numw, int line_no, int tild
 	if (memcmp (buf, &screen[li * columns], columns) != 0)
 	{
 		place_cursor (li, 0, FALSE);
-		write (1, buf, columns);
+		full_write (1, buf, columns);
 		memcpy (&screen[li * columns], buf, columns);
 	}
 
@@ -1398,6 +1403,7 @@ static char *
 text_hole_make (char *p, int size)
 {
 	int		bias;
+	int		end_off;
 
 	if (size <= 0)
 		return (p);
@@ -1407,11 +1413,12 @@ text_hole_make (char *p, int size)
 	if (end >= (text + text_size))
 	{
 		/* Precisa aumentar o buffer */
+		end_off = end - text;
 		bias = p - text;
 		text_size += size + 8192;
 		text = xrealloc (text, text_size);
 		p = text + bias;
-		end = text + text_size;
+		end = text + end_off;
 	}
 
 	memmove (p + size, p, end - p - size);
@@ -1799,7 +1806,7 @@ colon (const char *buf)
 		if (*q)
 		{
 			cookmode ();
-			printf ("\n");
+			write1 ("\n");
 			system (q);
 			Hit_Return ();
 			rawmode ();
@@ -2235,7 +2242,7 @@ do_cmd (int c)
 				}
 
 				buf[i++] = n;
-				write (1, &buf[i-1], 1);
+				safe_write (1, &buf[i-1], 1);
 			}
 
 			buf[i] = '\0';
@@ -2271,7 +2278,7 @@ do_cmd (int c)
 
 			place_cursor (rows - 1, 0, FALSE);
 			clear_to_eol ();
-			write (1, &c, 1);
+			safe_write (1, &c, 1);
 
 			i = 0;
 
@@ -2300,7 +2307,7 @@ do_cmd (int c)
 				}
 
 				buf[i++] = n;
-				write (1, &buf[i-1], 1);
+				safe_write (1, &buf[i-1], 1);
 			}
 
 			buf[i] = '\0';
@@ -2681,7 +2688,7 @@ edit_file (char **argv)
 
 	place_cursor (rows - 1, 0, FALSE);
 	clear_to_eol ();
-	printf ("\n");
+	write1 ("\n");
 
 }	/* end edit_file */
 
