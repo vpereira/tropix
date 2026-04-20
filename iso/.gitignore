@@ -1,0 +1,9 @@
+boot.img
+boot.img.gz
+iso_root/
+*.iso
+boot
+boot.cd
+boot.gz
+tropix
+boot.catalog

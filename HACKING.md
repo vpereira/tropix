@@ -59,6 +59,7 @@ Use Latin-1 (ISO-8859-1) encoding. Indent with tabs, width 8. Do not use spaces 
 ## Build a Bootable ISO from Source
 
 This section describes how to build a custom `tropix.iso` after making changes to the codebase.
+See `iso/README.md` for the source-only ISO recipe and helper scripts.
 
 I just opened the iso and looked into
 
